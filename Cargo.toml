@@ -1,6 +1,6 @@
 [package]
 name = "exhume_exfat"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Extract exFAT Filesystem specific artefacts from a given Partition."
 documentation = "https://www.forensicxlab.com/docs/exhume_exfat/getting-started"
@@ -17,8 +17,8 @@ log = "0.4"
 env_logger = "0.11"
 clap = { version = "4", features = ["derive"] }
 clap-num = "1"
-exhume_body = "0.1"
-thiserror = "1"
+exhume_body = "0.3.4"
+thiserror = "2.0.17"
 
 [dev-dependencies]
 anyhow = "1"
