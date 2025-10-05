@@ -1,4 +1,6 @@
 use crate::bpb::BootSector;
+use log::{debug, warn};
+use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom};
 
 /// exFAT uses 32-bit FAT entries. High 4 bits are reserved in FAT32; in exFAT full 32 are used.
@@ -31,13 +33,30 @@ impl<'a, T: Read + Seek> Fat<'a, T> {
         let mut out = Vec::new();
         let mut cur = first_cluster;
         let mut steps = 0usize;
+        let mut seen = HashSet::new();
+
+        if cur < 2 {
+            warn!("walk_chain: invalid start cluster {}", cur);
+            return Ok(out);
+        }
+
         while cur >= 2 && cur < 0xFFFFFFF0 && steps < max {
+            if !seen.insert(cur) {
+                warn!("walk_chain: detected cycle at cluster {}", cur);
+                break;
+            }
             out.push(cur);
             let next = self.read_entry(cur)?;
+            debug!("FAT[{}] -> {}", cur, next);
             if is_eoc(next) {
                 break;
             }
-            if next == 0 || next == cur {
+            if next == 0 {
+                debug!("walk_chain: cluster {} points to 0 (free?)", cur);
+                break;
+            }
+            if next == cur {
+                warn!("walk_chain: self-loop at cluster {}", cur);
                 break;
             }
             cur = next;

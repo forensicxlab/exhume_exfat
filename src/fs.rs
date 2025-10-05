@@ -3,7 +3,7 @@ use crate::compat::CompatDirEntry;
 use crate::direntry::{EntryType, FileRecord, RawDirEnt, assemble_file};
 use crate::exinode::ExInode;
 use crate::fat::Fat;
-use log::error;
+use log::{debug, error, warn};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -53,6 +53,9 @@ impl<T: Read + Seek> ExFatFS<T> {
     }
 
     fn read_cluster(&mut self, cluster: u32) -> Result<Vec<u8>, FsError> {
+        if cluster < 2 {
+            return Err(FsError::Parse(format!("invalid data cluster {}", cluster)));
+        }
         let off = self.cluster_to_offset(cluster);
         let mut buf = vec![0u8; self.bpb.bytes_per_cluster() as usize];
         self.io.seek(SeekFrom::Start(off))?;
@@ -66,6 +69,11 @@ impl<T: Read + Seek> ExFatFS<T> {
     ) -> Result<Vec<RawDirEnt>, FsError> {
         let mut fat = Fat::new(&self.bpb, &mut self.io);
         let chain = fat.walk_chain(first_cluster, 1_000_000)?;
+        debug!(
+            "read_dir_entries_from_chain: first_cluster={} chain_len={}",
+            first_cluster,
+            chain.len()
+        );
         let mut out = Vec::new();
         for cl in chain {
             let buf = self.read_cluster(cl)?;
@@ -95,13 +103,13 @@ impl<T: Read + Seek> ExFatFS<T> {
                     if let Some(fr) = assemble_file(&ents[i..end]) {
                         let ino = ((first_cluster as u64) << 32) | (i as u64);
                         out.push((ino, fr));
+                    } else {
+                        warn!("assemble_file failed at entry index {}", i);
                     }
                     i = end;
                     continue;
                 }
-                _ => {
-                    i += 1;
-                }
+                _ => i += 1,
             }
         }
         Ok(out)
@@ -124,13 +132,13 @@ impl<T: Read + Seek> ExFatFS<T> {
                     let end = (i + 1 + sec_cnt).min(ents.len());
                     if let Some(fr) = assemble_file(&ents[i..end]) {
                         out.push(fr);
+                    } else {
+                        warn!("assemble_file failed at entry index {}", i);
                     }
                     i = end;
                     continue;
                 }
-                _ => {
-                    i += 1;
-                }
+                _ => i += 1,
             }
         }
         Ok(out)
@@ -159,24 +167,43 @@ impl<T: Read + Seek> ExFatFS<T> {
                             if fr.is_dir() && fr.first_cluster >= 2 {
                                 stack.push(fr.first_cluster);
                             }
+                        } else {
+                            warn!(
+                                "assemble_file failed while indexing (dir_cluster={}, i={})",
+                                dir_clus, i
+                            );
                         }
                         i = end;
                         continue;
                     }
-                    _ => {
-                        i += 1;
-                    }
+                    _ => i += 1,
                 }
             }
         }
         self.index_built = true;
+        debug!(
+            "ensure_index: indexed {} inodes",
+            self.inode_to_record.len()
+        );
         Ok(())
     }
 
     pub fn read_file(&mut self, fr: &FileRecord) -> Result<Vec<u8>, FsError> {
+        if fr.first_cluster < 2 {
+            return Err(FsError::Parse(format!(
+                "invalid first_cluster {} for '{}'",
+                fr.first_cluster, fr.name
+            )));
+        }
         let mut fat = Fat::new(&self.bpb, &mut self.io);
         let cluster_guess = (fr.size / self.bpb.bytes_per_cluster()) as usize + 4;
         let chain = fat.walk_chain(fr.first_cluster, cluster_guess)?;
+        if chain.is_empty() && fr.size > 0 {
+            warn!(
+                "read_file: empty chain but size={} for '{}'",
+                fr.size, fr.name
+            );
+        }
         let mut out = Vec::with_capacity(fr.size as usize);
         for cl in chain {
             let buf = self.read_cluster(cl)?;
@@ -215,7 +242,11 @@ impl<T: Read + Seek> ExFatFS<T> {
                     cur_dir = fr.first_cluster;
                 }
             } else {
-                return Err(FsError::NotFound(comp.to_string()));
+                return Err(FsError::NotFound(format!(
+                    "{} (at '/{}')",
+                    comp,
+                    parts[..=idx].join("/")
+                )));
             }
         }
         Err(FsError::NotFound(path.to_string()))
@@ -225,13 +256,12 @@ impl<T: Read + Seek> ExFatFS<T> {
         json!({ "bpb": self.bpb.to_json() })
     }
 
-    // ---------- ext-like façade ----------
     pub fn get_inode(&mut self, inode_num: u64) -> Result<ExInode, FsError> {
         self.ensure_index()?;
         let (_p, _idx, fr) = self
             .inode_to_record
             .get(&inode_num)
-            .ok_or_else(|| FsError::NotFound(format!("inode {}", inode_num)))?;
+            .ok_or_else(|| FsError::NotFound(format!("inode 0x{:016x}", inode_num)))?;
         Ok(ExInode::from_record(inode_num, fr))
     }
 
@@ -286,18 +316,16 @@ impl<T: Read + Seek> ExFatFS<T> {
     pub fn read_inode(&mut self, inode: &ExInode) -> Result<Vec<u8>, FsError> {
         self.ensure_index()?;
 
-        // Take an owned copy of the FileRecord, then drop the map borrow
         let fr = self
             .inode_to_record
             .get(&inode.i_num)
             .map(|(_, _, fr)| fr.clone())
-            .ok_or_else(|| FsError::NotFound(format!("inode {}", inode.i_num)))?;
+            .ok_or_else(|| FsError::NotFound(format!("inode 0x{:016x}", inode.i_num)))?;
 
         if (fr.attributes & 0x0010) != 0 {
             return Err(FsError::NotAFile(fr.name));
         }
 
-        // Now we can mutably borrow `self`
         self.read_file(&fr)
     }
 }

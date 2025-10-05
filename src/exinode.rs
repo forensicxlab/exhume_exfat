@@ -45,7 +45,7 @@ impl ExInode {
         let mut t = Table::new();
         t.add_row(Row::new(vec![
             Cell::new("Identifier"),
-            Cell::new(&format!("0x{:x}", self.i_num)),
+            Cell::new(&format!("0x{:016x}", self.i_num)),
         ]));
         t.add_row(Row::new(vec![
             Cell::new("Attributes"),

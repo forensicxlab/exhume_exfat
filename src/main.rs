@@ -45,25 +45,17 @@ fn main() {
                 .help("The size of the exFAT partition in sectors (dec or hex)."),
         )
         .arg(
-            Arg::new("super")
-                .long("super")
+            Arg::new("bpb")
+                .long("bpb")
                 .action(ArgAction::SetTrue)
                 .help("Display boot sector / BPB info."),
         )
         .arg(
-            Arg::new("list")
-                .short('L')
-                .long("list")
+            Arg::new("root")
+                .short('R')
+                .long("root")
                 .action(ArgAction::SetTrue)
                 .help("List root directory entries."),
-        )
-        .arg(
-            Arg::new("path")
-                .short('p')
-                .long("path")
-                .value_parser(value_parser!(String))
-                .required(false)
-                .help("Read a file by absolute path from root, e.g. '/DCIM/100MEDIA/VID.MP4'."),
         )
         .arg(
             Arg::new("json")
@@ -84,7 +76,7 @@ fn main() {
                 .short('i')
                 .long("inode")
                 .value_parser(maybe_hex::<u64>)
-                .help("Display metadata for a fake inode number."),
+                .help("Display metadata for a fake inode number (hex or dec accepted)."),
         )
         .arg(
             Arg::new("dir_entry")
@@ -121,14 +113,12 @@ fn main() {
     let offset = matches.get_one::<u64>("offset").unwrap();
     let size = matches.get_one::<u64>("size").unwrap();
 
-    let show_super = matches.get_flag("super");
+    let show_bpb = matches.get_flag("bpb");
     let json_output = matches.get_flag("json");
-    let list_root = matches.get_flag("list");
-    let path_opt = matches.get_one::<String>("path").cloned();
+    let list_root = matches.get_flag("root");
     let inode_num = matches.get_one::<u64>("inode").copied().unwrap_or(0);
     let show_dir_entry = matches.get_flag("dir_entry");
     let dump_content = matches.get_flag("dump");
-    let dump = matches.get_flag("dump");
 
     // Body / slice
     let mut body = Body::new(file_path.to_owned(), format);
@@ -157,7 +147,7 @@ fn main() {
                         .into_iter()
                         .map(|(inode, r)| {
                             json!({
-                                "inode": inode,
+                                "inode": format!("0x{:016x}", inode), // HEX ONLY
                                 "name": r.name,
                                 "attributes": r.attributes,
                                 "first_cluster": r.first_cluster,
@@ -178,7 +168,7 @@ fn main() {
                     }
                 }
             }
-            Err(e) => error!("List failed: {}", e),
+            Err(e) => error!("Root listing failed: {}", e),
         }
     }
 
@@ -199,14 +189,20 @@ fn main() {
                                     );
                                 } else {
                                     for de in entries {
-                                        println!("{} / 0x{:x} {}", de.inode, de.file_type, de.name);
+                                        println!(
+                                            "0x{:016x} / 0x{:x} {}",
+                                            de.inode, de.file_type, de.name
+                                        );
                                     }
                                 }
                             }
-                            Err(e) => error!("dir list failed: {}", e),
+                            Err(e) => error!("Directory listing failed: {}", e),
                         }
                     } else {
-                        error!("requested --dir_entry but inode is not a directory");
+                        error!(
+                            "requested --dir_entry but inode 0x{:016x} is not a directory",
+                            inode_num
+                        );
                     }
                 } else {
                     if json_output {
@@ -221,15 +217,18 @@ fn main() {
 
                 if dump_content {
                     if inode.is_dir() {
-                        error!("cannot dump directory");
+                        error!("cannot dump directory (inode 0x{:016x})", inode_num);
                     } else {
                         match fs.read_inode(&inode) {
                             Ok(bytes) => {
-                                let filename = format!("inode_{}.bin", inode_num);
+                                let filename = format!("inode_0x{:016x}.bin", inode_num);
                                 match File::create(&filename) {
                                     Ok(mut f) => {
-                                        let _ = f.write_all(&bytes);
-                                        info!("wrote {} bytes to '{}'", bytes.len(), filename);
+                                        if let Err(e) = f.write_all(&bytes) {
+                                            error!("write failed for '{}': {}", filename, e);
+                                        } else {
+                                            info!("wrote {} bytes to '{}'", bytes.len(), filename);
+                                        }
                                     }
                                     Err(e) => error!("{}", e),
                                 }
@@ -239,10 +238,10 @@ fn main() {
                     }
                 }
             }
-            Err(e) => error!("cannot get inode {}: {}", inode_num, e),
+            Err(e) => error!("cannot get inode 0x{:016x}: {}", inode_num, e),
         }
     }
-    if show_super {
+    if show_bpb {
         if json_output {
             println!(
                 "{}",
@@ -250,30 +249,6 @@ fn main() {
             );
         } else {
             println!("{}", fs.bpb.to_string());
-        }
-    }
-
-    if let Some(path) = path_opt {
-        match fs.read_path(&path) {
-            Ok(bytes) => {
-                if dump {
-                    let leaf = std::path::Path::new(&path)
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("dump.bin");
-                    let outname = format!("{}.bin", leaf);
-                    match File::create(&outname) {
-                        Ok(mut f) => {
-                            let _ = f.write_all(&bytes);
-                            info!("wrote {} bytes to '{}'", bytes.len(), outname);
-                        }
-                        Err(e) => error!("{}", e),
-                    }
-                } else {
-                    println!("read {} bytes", bytes.len());
-                }
-            }
-            Err(e) => error!("read_path failed: {}", e),
         }
     }
 }

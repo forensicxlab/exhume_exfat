@@ -1,3 +1,4 @@
+use log::{debug, warn};
 use prettytable::{Cell, Row, Table};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -25,39 +26,91 @@ pub struct BootSector {
 impl BootSector {
     pub fn from_bytes(bs: &[u8]) -> Result<Self, String> {
         if bs.len() < 512 {
-            return Err("Boot sector too short".into());
+            return Err(format!("Boot sector too short: {} < 512 bytes", bs.len()));
         }
+
+        let read_u16 = |o: usize| -> Result<u16, String> {
+            bs.get(o..o + 2)
+                .ok_or_else(|| format!("BS bounds error @0x{:X}+2", o))
+                .and_then(|s| Ok(u16::from_le_bytes([s[0], s[1]])))
+        };
+        let read_u32 = |o: usize| -> Result<u32, String> {
+            bs.get(o..o + 4)
+                .ok_or_else(|| format!("BS bounds error @0x{:X}+4", o))
+                .and_then(|s| Ok(u32::from_le_bytes([s[0], s[1], s[2], s[3]])))
+        };
+        let read_u64 = |o: usize| -> Result<u64, String> {
+            bs.get(o..o + 8)
+                .ok_or_else(|| format!("BS bounds error @0x{:X}+8", o))
+                .and_then(|s| {
+                    Ok(u64::from_le_bytes([
+                        s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
+                    ]))
+                })
+        };
+
         let mut oem_name = [0u8; 8];
         oem_name.copy_from_slice(&bs[3..11]);
-        let le_u16 = |o: usize| -> u16 { u16::from_le_bytes(bs[o..o + 2].try_into().unwrap()) };
-        let le_u32 = |o: usize| -> u32 { u32::from_le_bytes(bs[o..o + 4].try_into().unwrap()) };
-        let le_u64 = |o: usize| -> u64 { u64::from_le_bytes(bs[o..o + 8].try_into().unwrap()) };
 
-        // Simple sanity: FileSystemName should read "EXFAT   " at 0x03? (actually 0x03.. not normative here)
-        // We accept any, but many images will have it.
-        let bs55aa = u16::from_le_bytes(bs[510..512].try_into().unwrap());
+        // Signature
+        let bs55aa = read_u16(510)?;
         if bs55aa != 0xAA55 {
             return Err("Invalid boot signature (0x55AA missing)".into());
         }
 
-        Ok(Self {
+        let me = Self {
             oem_name,
-            partition_offset: le_u64(0x40),
-            volume_length: le_u64(0x48),
-            fat_offset: le_u32(0x50),
-            fat_length: le_u32(0x54),
-            cluster_heap_offset: le_u32(0x58),
-            cluster_count: le_u32(0x5C),
-            root_dir_first_cluster: le_u32(0x60),
-            volume_serial: le_u32(0x64),
-            fs_revision: le_u16(0x68),
-            volume_flags: le_u16(0x6A),
+            partition_offset: read_u64(0x40)?,
+            volume_length: read_u64(0x48)?,
+            fat_offset: read_u32(0x50)?,
+            fat_length: read_u32(0x54)?,
+            cluster_heap_offset: read_u32(0x58)?,
+            cluster_count: read_u32(0x5C)?,
+            root_dir_first_cluster: read_u32(0x60)?,
+            volume_serial: read_u32(0x64)?,
+            fs_revision: read_u16(0x68)?,
+            volume_flags: read_u16(0x6A)?,
             bytes_per_sector_shift: bs[0x6C],
             sectors_per_cluster_shift: bs[0x6D],
             num_fats: bs[0x6E],
             drive_select: bs[0x6F],
             percent_in_use: bs[0x70],
-        })
+        };
+
+        // Sanity checks (non-fatal -> warn, but return errors for clearly broken values)
+        if me.bytes_per_sector_shift < 9 || me.bytes_per_sector_shift > 12 {
+            warn!(
+                "Unusual bytes_per_sector_shift={} (expected 9..=12)",
+                me.bytes_per_sector_shift
+            );
+        }
+        if me.sectors_per_cluster_shift > 25 {
+            warn!(
+                "Suspicious sectors_per_cluster_shift={}",
+                me.sectors_per_cluster_shift
+            );
+        }
+        if me.cluster_count == 0 {
+            return Err("Cluster count is zero".into());
+        }
+        if me.root_dir_first_cluster < 2 {
+            return Err(format!(
+                "Invalid root_dir_first_cluster: {} (<2)",
+                me.root_dir_first_cluster
+            ));
+        }
+        if me.percent_in_use > 100 {
+            warn!("percent_in_use={} > 100", me.percent_in_use);
+        }
+
+        debug!(
+            "BPB: bytes/sector={}, sectors/cluster={}, root clus={}",
+            me.bytes_per_sector(),
+            me.sectors_per_cluster(),
+            me.root_dir_first_cluster
+        );
+
+        Ok(me)
     }
 
     #[inline]
@@ -77,6 +130,9 @@ impl BootSector {
     pub fn fat_start_byte(&self) -> u64 {
         self.fat_offset as u64 * self.bytes_per_sector()
     }
+
+    // Currently unused outside this module, keep for completeness.
+    #[allow(dead_code)]
     #[inline]
     pub fn cluster_heap_start_byte(&self) -> u64 {
         self.cluster_heap_offset as u64 * self.bytes_per_sector()

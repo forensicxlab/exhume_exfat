@@ -27,9 +27,12 @@ impl CompatDirEntry {
     }
     pub fn to_string(&self) -> String {
         if !self.name.is_empty() {
-            format!("{} :  {} : 0x{:x}", self.inode, self.name, self.file_type)
+            format!(
+                "0x{:016x} :  {} : 0x{:x}",
+                self.inode, self.name, self.file_type
+            )
         } else {
-            format!("{} :  ? : 0x{:x}", self.inode, self.file_type)
+            format!("0x{:016x} :  ? : 0x{:x}", self.inode, self.file_type)
         }
     }
 }
