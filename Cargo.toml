@@ -2,6 +2,11 @@
 name = "exhume_exfat"
 version = "0.1.0"
 edition = "2024"
+description = "Extract exFAT Filesystem specific artefacts from a given Partition."
+documentation = "https://www.forensicxlab.com/docs/exhume_exfat/getting-started"
+authors = ["k1nd0ne"]
+license = "GPL-2.0-or-later"
+readme = "README.md"
 
 [dependencies]
 chrono = { version = "0.4", features = ["clock"] }
