@@ -20,7 +20,6 @@ pub struct BootSector {
     pub sectors_per_cluster_shift: u8, // 0x6D (2^n)
     pub num_fats: u8,             // 0x6E
     pub drive_select: u8,         // 0x6F
-    pub percent_in_use: u8,       // 0x70
 }
 
 impl BootSector {
@@ -74,7 +73,6 @@ impl BootSector {
             sectors_per_cluster_shift: bs[0x6D],
             num_fats: bs[0x6E],
             drive_select: bs[0x6F],
-            percent_in_use: bs[0x70],
         };
 
         // Sanity checks (non-fatal -> warn, but return errors for clearly broken values)
@@ -98,9 +96,6 @@ impl BootSector {
                 "Invalid root_dir_first_cluster: {} (<2)",
                 me.root_dir_first_cluster
             ));
-        }
-        if me.percent_in_use > 100 {
-            warn!("percent_in_use={} > 100", me.percent_in_use);
         }
 
         debug!(
@@ -183,10 +178,6 @@ impl BootSector {
         t.add_row(Row::new(vec![
             Cell::new("Volume flags"),
             Cell::new(&format!("0x{:04X}", self.volume_flags)),
-        ]));
-        t.add_row(Row::new(vec![
-            Cell::new("Percent in use"),
-            Cell::new(&format!("{}%", self.percent_in_use)),
         ]));
         t.to_string()
     }
