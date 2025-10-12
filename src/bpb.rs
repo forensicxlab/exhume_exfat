@@ -1,4 +1,4 @@
-use log::{debug, warn};
+use log::debug;
 use prettytable::{Cell, Row, Table};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -51,7 +51,7 @@ impl BootSector {
         let mut oem_name = [0u8; 8];
         oem_name.copy_from_slice(&bs[3..11]);
 
-        // Signature
+        // 0x55AA signature must be present
         let bs55aa = read_u16(510)?;
         if bs55aa != 0xAA55 {
             return Err("Invalid boot signature (0x55AA missing)".into());
@@ -75,21 +75,38 @@ impl BootSector {
             drive_select: bs[0x6F],
         };
 
-        // Sanity checks (non-fatal -> warn, but return errors for clearly broken values)
-        if me.bytes_per_sector_shift < 9 || me.bytes_per_sector_shift > 12 {
-            warn!(
-                "Unusual bytes_per_sector_shift={} (expected 9..=12)",
-                me.bytes_per_sector_shift
-            );
+        if &me.oem_name != b"EXFAT   " {
+            return Err(format!(
+                "OEM name isn't EXFAT: {:?}",
+                String::from_utf8_lossy(&me.oem_name)
+            ));
         }
-        if me.sectors_per_cluster_shift > 25 {
-            warn!(
-                "Suspicious sectors_per_cluster_shift={}",
-                me.sectors_per_cluster_shift
-            );
+
+        if me.fs_revision != 0x0100 {
+            return Err(format!(
+                "Unexpected exFAT fs_revision=0x{:04X}",
+                me.fs_revision
+            ));
         }
-        if me.cluster_count == 0 {
-            return Err("Cluster count is zero".into());
+
+        if me.num_fats != 1 {
+            return Err(format!("num_fats={} (exFAT requires 1)", me.num_fats));
+        }
+
+        if me.volume_length == 0 {
+            return Err("volume_length is zero".into());
+        }
+        if me.fat_offset == 0 || me.fat_length == 0 {
+            return Err(format!(
+                "Invalid FAT location/length: offset={}, length={}",
+                me.fat_offset, me.fat_length
+            ));
+        }
+        if me.cluster_heap_offset == 0 || me.cluster_count < 2 {
+            return Err(format!(
+                "Invalid cluster heap: offset={}, count={}",
+                me.cluster_heap_offset, me.cluster_count
+            ));
         }
         if me.root_dir_first_cluster < 2 {
             return Err(format!(
@@ -98,12 +115,46 @@ impl BootSector {
             ));
         }
 
-        debug!(
-            "BPB: bytes/sector={}, sectors/cluster={}, root clus={}",
-            me.bytes_per_sector(),
-            me.sectors_per_cluster(),
-            me.root_dir_first_cluster
-        );
+        if !(9..=12).contains(&me.bytes_per_sector_shift) {
+            return Err(format!(
+                "bytes_per_sector_shift={} not in [9..12]",
+                me.bytes_per_sector_shift
+            ));
+        }
+        if me.sectors_per_cluster_shift > 25 {
+            return Err(format!(
+                "sectors_per_cluster_shift={} too large",
+                me.sectors_per_cluster_shift
+            ));
+        }
+        let bps = me.bytes_per_sector();
+        let spc = me.sectors_per_cluster();
+        let bpc = me.bytes_per_cluster();
+
+        if bpc < 4096 || bpc > 32 * 1024 * 1024 {
+            return Err(format!("bytes_per_cluster={} outside [4KiB..32MiB]", bpc));
+        }
+
+        let fat_end_sector = me.fat_offset as u64 + me.fat_length as u64;
+        if fat_end_sector > me.cluster_heap_offset as u64 {
+            return Err(format!(
+                "FAT overlaps cluster heap: FAT end={} >= heap offset={}",
+                fat_end_sector, me.cluster_heap_offset
+            ));
+        }
+
+        let first_data_cluster = 2u64;
+        let last_cluster = me.cluster_count as u64 + first_data_cluster - 1;
+        if (me.root_dir_first_cluster as u64) < first_data_cluster
+            || (me.root_dir_first_cluster as u64) > last_cluster
+        {
+            return Err(format!(
+                "root_dir_first_cluster={} out of range [2..{}]",
+                me.root_dir_first_cluster, last_cluster
+            ));
+        }
+
+        debug!("BPB OK: bps={} spc={} bpc={}", bps, spc, bpc);
 
         Ok(me)
     }

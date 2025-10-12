@@ -9,9 +9,9 @@ use std::io::Write;
 
 fn main() {
     let matches = Command::new("exhume_exfat")
-        .version("0.1.2")
+        .version("0.1.3")
         .author("ForensicXlab")
-        .about("Exhume artifacts from an exFAT partition.")
+        .about("Exhume artifacts from an exFAT filesystem.")
         .arg(
             Arg::new("body")
                 .short('b')
@@ -26,7 +26,7 @@ fn main() {
                 .long("format")
                 .value_parser(value_parser!(String))
                 .required(false)
-                .help("Body format: 'raw' or 'ewf'."),
+                .help("Body format: 'raw', 'ewf' or 'vmdk' ('auto' by default)."),
         )
         .arg(
             Arg::new("offset")
