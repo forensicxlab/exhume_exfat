@@ -1,11 +1,9 @@
 pub mod bpb;
+pub mod carve;
+pub mod compat;
 pub mod direntry;
+pub mod exinode;
 pub mod fat;
 pub mod fs;
-
-// add:
-pub mod compat;
-pub mod exinode; // fake-inode compatibility // ext-like DirEntry wrapper
-
 pub use crate::bpb::BootSector;
 pub use crate::fs::ExFatFS;

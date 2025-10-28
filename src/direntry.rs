@@ -43,8 +43,18 @@ impl RawDirEnt {
             raw,
         }
     }
+
     pub fn kind(&self) -> EntryType {
         EntryType::from(self.entry_type)
+    }
+
+    pub fn is_active(&self) -> bool {
+        (self.entry_type & 0x80) != 0
+    }
+
+    /// Interpret kind ignoring the active bit (normalize type by setting MSB).
+    pub fn kind_normalized(&self) -> EntryType {
+        EntryType::from(self.entry_type | 0x80)
     }
 }
 
@@ -179,6 +189,10 @@ pub struct FileRecord {
     pub attributes: u16,
     pub first_cluster: u32,
     pub size: u64,
+    pub general_flags: u8,
+    pub create_time: u32,
+    pub last_mod_time: u32,
+    pub last_access_time: u32,
 }
 
 impl FileRecord {
@@ -200,7 +214,7 @@ pub fn assemble_file<'a>(set: &'a [RawDirEnt]) -> Option<FileRecord> {
     let mut name = String::new();
 
     for e in set {
-        match e.kind() {
+        match e.kind_normalized() {
             EntryType::File => {
                 fde = Some(FileDirectoryEntry::parse(e));
             }
@@ -208,7 +222,7 @@ pub fn assemble_file<'a>(set: &'a [RawDirEnt]) -> Option<FileRecord> {
                 stream = Some(StreamExtensionEntry::parse(e));
             }
             EntryType::FileName => {
-                name.push_str(&FileNameEntry::parse(e).name_fragment);
+                name.push_str(&crate::direntry::FileNameEntry::parse(e).name_fragment);
             }
             _ => {}
         }
@@ -219,6 +233,10 @@ pub fn assemble_file<'a>(set: &'a [RawDirEnt]) -> Option<FileRecord> {
             attributes: fd.attributes,
             first_cluster: st.first_cluster,
             size: st.data_length,
+            general_flags: st.general_flags,
+            create_time: fd.create_time,
+            last_mod_time: fd.last_mod_time,
+            last_access_time: fd.last_access_time,
         });
     }
     None

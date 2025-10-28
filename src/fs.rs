@@ -23,7 +23,7 @@ pub enum FsError {
 
 pub struct ExFatFS<T: Read + Seek> {
     pub bpb: BootSector,
-    io: T,
+    pub io: T,
     // fake-inode index: inode -> (parent_dir_first_cluster, primary_entry_index, FileRecord)
     index_built: bool,
     inode_to_record: HashMap<u64, (u32, usize, FileRecord)>,
@@ -52,7 +52,7 @@ impl<T: Read + Seek> ExFatFS<T> {
         self.bpb.cluster_to_byte_offset(clus)
     }
 
-    fn read_cluster(&mut self, cluster: u32) -> Result<Vec<u8>, FsError> {
+    pub fn read_cluster(&mut self, cluster: u32) -> Result<Vec<u8>, FsError> {
         if cluster < 2 {
             return Err(FsError::Parse(format!("invalid data cluster {}", cluster)));
         }
@@ -63,7 +63,7 @@ impl<T: Read + Seek> ExFatFS<T> {
         Ok(buf)
     }
 
-    fn read_dir_entries_from_chain(
+    pub fn read_dir_entries_from_chain(
         &mut self,
         first_cluster: u32,
     ) -> Result<Vec<RawDirEnt>, FsError> {
@@ -188,6 +188,8 @@ impl<T: Read + Seek> ExFatFS<T> {
         Ok(())
     }
 
+    // exhume_exfat/src/fs.rs
+
     pub fn read_file(&mut self, fr: &FileRecord) -> Result<Vec<u8>, FsError> {
         if fr.first_cluster < 2 {
             return Err(FsError::Parse(format!(
@@ -195,15 +197,39 @@ impl<T: Read + Seek> ExFatFS<T> {
                 fr.first_cluster, fr.name
             )));
         }
+
+        // exFAT Stream Extension general_flags:
+        // bit 1 == 1  -> NoFatChain (contiguous allocation)
+        let no_fat_chain = (fr.general_flags & 0x02) != 0;
+
+        if no_fat_chain {
+            // Read contiguous clusters directly
+            let mut remaining = fr.size as usize;
+            let mut cur = fr.first_cluster;
+            let mut out = Vec::with_capacity(remaining);
+
+            while remaining > 0 {
+                let blk = self.read_cluster(cur)?;
+                let take = remaining.min(blk.len());
+                out.extend_from_slice(&blk[..take]);
+                remaining -= take;
+                cur += 1; // contiguous
+            }
+            return Ok(out);
+        }
+
+        // FAT-chained allocation
+        let clusters_needed = ((fr.size as u64 + self.bpb.bytes_per_cluster() - 1)
+            / self.bpb.bytes_per_cluster()) as usize;
         let mut fat = Fat::new(&self.bpb, &mut self.io);
-        let cluster_guess = (fr.size / self.bpb.bytes_per_cluster()) as usize + 4;
-        let chain = fat.walk_chain(fr.first_cluster, cluster_guess)?;
+        let chain = fat.walk_chain(fr.first_cluster, clusters_needed + 4)?;
         if chain.is_empty() && fr.size > 0 {
             warn!(
                 "read_file: empty chain but size={} for '{}'",
                 fr.size, fr.name
             );
         }
+
         let mut out = Vec::with_capacity(fr.size as usize);
         for cl in chain {
             let buf = self.read_cluster(cl)?;
