@@ -1,4 +1,4 @@
-use clap::{Arg, ArgAction, Command, value_parser};
+use clap::*;
 use clap_num::maybe_hex;
 use exhume_body::{Body, BodySlice};
 use exhume_exfat::ExFatFS;
@@ -9,8 +9,8 @@ use std::io::Write;
 
 fn main() {
     let matches = Command::new("exhume_exfat")
-        .version("0.1.3")
-        .author("ForensicXlab")
+        .version(crate_version!())
+        .author(crate_authors!())
         .about("Exhume artifacts from an exFAT filesystem.")
         .arg(
             Arg::new("body")
