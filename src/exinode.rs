@@ -1,5 +1,5 @@
 use crate::direntry::FileRecord;
-use chrono::{NaiveDate, NaiveDateTime, SecondsFormat, Utc};
+use chrono::{DateTime, NaiveDate, SecondsFormat};
 use prettytable::{Cell, Row, Table};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -54,8 +54,8 @@ fn unix_to_iso(secs: i64) -> String {
     if secs < 0 {
         return format!("{}", secs);
     }
-    match NaiveDateTime::from_timestamp_opt(secs, 0) {
-        Some(ndt) => ndt.and_utc().to_rfc3339_opts(SecondsFormat::Secs, true),
+    match DateTime::from_timestamp(secs, 0) {
+        Some(ndt) => ndt.to_rfc3339_opts(SecondsFormat::Secs, true),
         None => format!("{}", secs),
     }
 }

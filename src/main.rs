@@ -93,29 +93,29 @@ fn main() {
                 .action(ArgAction::SetTrue)
                 .help("When --inode is set, dump content to 'inode_<N>.bin'"),
         )
-        .arg(
-            Arg::new("carve")
-                .long("carve")
-                .action(ArgAction::SetTrue)
-                .help(
-                    "Carve files from unallocated clusters (exFAT-aware, per Vandermeer et al.).",
-                ),
-        )
-        .arg(
-            Arg::new("carve_out")
-                .long("carve-out")
-                .value_parser(value_parser!(String))
-                .required(false)
-                .requires("carve")
-                .help("Output directory for carved files (default: './carved')."),
-        )
-        .arg(
-            Arg::new("carve_limit")
-                .long("carve-limit")
-                .value_parser(value_parser!(usize))
-                .requires("carve")
-                .help("Stop after carving N files (optional)."),
-        )
+        // .arg(
+        //     Arg::new("carve")
+        //         .long("carve")
+        //         .action(ArgAction::SetTrue)
+        //         .help(
+        //             "Carve files from unallocated clusters (exFAT-aware, per Vandermeer et al.).",
+        //         ),
+        // )
+        // .arg(
+        //     Arg::new("carve_out")
+        //         .long("carve-out")
+        //         .value_parser(value_parser!(String))
+        //         .required(false)
+        //         .requires("carve")
+        //         .help("Output directory for carved files (default: './carved')."),
+        // )
+        // .arg(
+        //     Arg::new("carve_limit")
+        //         .long("carve-limit")
+        //         .value_parser(value_parser!(usize))
+        //         .requires("carve")
+        //         .help("Stop after carving N files (optional)."),
+        // )
         .get_matches();
 
     // Logger
@@ -142,12 +142,12 @@ fn main() {
     let inode_num = matches.get_one::<u64>("inode").copied().unwrap_or(0);
     let show_dir_entry = matches.get_flag("dir_entry");
     let dump_content = matches.get_flag("dump");
-    let do_carve = matches.get_flag("carve");
-    let carve_out = matches
-        .get_one::<String>("carve_out")
-        .cloned()
-        .unwrap_or_else(|| "carved".to_string());
-    let carve_limit = matches.get_one::<usize>("carve_limit").copied();
+    // let do_carve = matches.get_flag("carve");
+    // let carve_out = matches
+    //     .get_one::<String>("carve_out")
+    //     .cloned()
+    //     .unwrap_or_else(|| "carved".to_string());
+    // let carve_limit = matches.get_one::<usize>("carve_limit").copied();
 
     // Body / slice
     let mut body = Body::new(file_path.to_owned(), format);
@@ -168,12 +168,12 @@ fn main() {
         }
     };
 
-    if do_carve {
-        match exhume_exfat::carve::carve(&mut fs, &carve_out, carve_limit) {
-            Ok(n) => info!("carving complete: {} files written to '{}'", n, carve_out),
-            Err(e) => error!("carve failed: {}", e),
-        }
-    }
+    // if do_carve {
+    //     match exhume_exfat::carve::carve(&mut fs, &carve_out, carve_limit) {
+    //         Ok(n) => info!("carving complete: {} files written to '{}'", n, carve_out),
+    //         Err(e) => error!("carve failed: {}", e),
+    //     }
+    // }
 
     if list_root {
         match fs.list_root_with_inodes() {

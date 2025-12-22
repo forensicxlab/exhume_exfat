@@ -99,7 +99,7 @@ fn read_allocation_bitmap<T: std::io::Read + std::io::Seek>(
     ))
 }
 
-/// Return **all inactive** file sets across the FS, as per §3.7 / §5 (0x80 cleared).   [oai_citation:2‡arXiv](https://arxiv.org/pdf/1804.08653)
+/// Return **all inactive** file sets across the FS (https://arxiv.org/pdf/1804.08653)
 fn collect_inactive_entries<T: std::io::Read + std::io::Seek>(
     fs: &mut ExFatFS<T>,
 ) -> Result<Vec<InactiveMeta>, FsError> {
@@ -199,7 +199,7 @@ pub fn carve<T: std::io::Read + std::io::Seek>(
     let mut found = 0usize;
     let mut cl = 2u32; // first data cluster
 
-    // Walk through all clusters; look only at unallocated ones (§5.2).   [oai_citation:4‡arXiv](https://arxiv.org/pdf/1804.08653)
+    // Walk through all clusters; look only at unallocated ones (https://arxiv.org/pdf/1804.08653)
     while (cl as u64) < fs.bpb.cluster_count as u64 + 2 {
         if !bitmap_is_allocated(&bitmap, cl) {
             // scan header at cluster start
@@ -217,7 +217,7 @@ pub fn carve<T: std::io::Read + std::io::Seek>(
                     let meta_opt = candidates.first().cloned();
 
                     // Decide size and chain method
-                    let (size, uses_fat, name_guess) = if let Some(meta) = meta_opt {
+                    let (size, uses_fat, _name_guess) = if let Some(meta) = meta_opt {
                         (meta.size, meta.uses_fat, meta.name.clone())
                     } else {
                         // Unknown metadata: fall back to contiguous recovery until next allocated cluster or limit to a few MB
@@ -281,7 +281,7 @@ pub fn carve<T: std::io::Read + std::io::Seek>(
                             return Ok(found);
                         }
                     }
-                    break; // don’t double-write same cluster on multiple signatures
+                    break;
                 }
             }
         }
