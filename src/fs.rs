@@ -219,8 +219,7 @@ impl<T: Read + Seek> ExFatFS<T> {
         }
 
         // FAT-chained allocation
-        let clusters_needed = ((fr.size as u64 + self.bpb.bytes_per_cluster() - 1)
-            / self.bpb.bytes_per_cluster()) as usize;
+        let clusters_needed = (fr.size).div_ceil(self.bpb.bytes_per_cluster()) as usize;
         let mut fat = Fat::new(&self.bpb, &mut self.io);
         let chain = fat.walk_chain(fr.first_cluster, clusters_needed + 4)?;
         if chain.is_empty() && fr.size > 0 {

@@ -150,9 +150,9 @@ fn main() {
     // let carve_limit = matches.get_one::<usize>("carve_limit").copied();
 
     // Body / slice
-    let mut body = Body::new(file_path.to_owned(), format);
+    let body = Body::new(file_path.to_owned(), format);
     let partition_size = *size * body.get_sector_size() as u64;
-    let mut slice = match BodySlice::new(&mut body, *offset, partition_size) {
+    let mut slice = match BodySlice::new(&body, *offset, partition_size) {
         Ok(sl) => sl,
         Err(e) => {
             error!("Could not create BodySlice: {}", e);
@@ -240,15 +240,13 @@ fn main() {
                             inode_num
                         );
                     }
+                } else if json_output {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&inode.to_json()).unwrap()
+                    );
                 } else {
-                    if json_output {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&inode.to_json()).unwrap()
-                        );
-                    } else {
-                        println!("{}", inode.to_string());
-                    }
+                    println!("{}", inode);
                 }
 
                 if dump_content {
@@ -284,7 +282,7 @@ fn main() {
                 serde_json::to_string_pretty(&fs.super_info_json()).unwrap()
             );
         } else {
-            println!("{}", fs.bpb.to_string());
+            println!("{}", fs.bpb);
         }
     }
 }

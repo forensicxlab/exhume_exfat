@@ -31,20 +31,20 @@ impl BootSector {
         let read_u16 = |o: usize| -> Result<u16, String> {
             bs.get(o..o + 2)
                 .ok_or_else(|| format!("BS bounds error @0x{:X}+2", o))
-                .and_then(|s| Ok(u16::from_le_bytes([s[0], s[1]])))
+                .map(|s| u16::from_le_bytes([s[0], s[1]]))
         };
         let read_u32 = |o: usize| -> Result<u32, String> {
             bs.get(o..o + 4)
                 .ok_or_else(|| format!("BS bounds error @0x{:X}+4", o))
-                .and_then(|s| Ok(u32::from_le_bytes([s[0], s[1], s[2], s[3]])))
+                .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
         };
         let read_u64 = |o: usize| -> Result<u64, String> {
             bs.get(o..o + 8)
                 .ok_or_else(|| format!("BS bounds error @0x{:X}+8", o))
-                .and_then(|s| {
-                    Ok(u64::from_le_bytes([
+                .map(|s| {
+                    u64::from_le_bytes([
                         s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
-                    ]))
+                    ])
                 })
         };
 
@@ -131,7 +131,7 @@ impl BootSector {
         let spc = me.sectors_per_cluster();
         let bpc = me.bytes_per_cluster();
 
-        if bpc < 4096 || bpc > 32 * 1024 * 1024 {
+        if !(4096..=32 * 1024 * 1024).contains(&bpc) {
             return Err(format!("bytes_per_cluster={} outside [4KiB..32MiB]", bpc));
         }
 
@@ -195,8 +195,10 @@ impl BootSector {
     pub fn to_json(&self) -> Value {
         serde_json::to_value(self).unwrap_or_else(|_| json!({}))
     }
+}
 
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for BootSector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut t = Table::new();
         t.add_row(Row::new(vec![
             Cell::new("Bytes/sector"),
@@ -230,6 +232,6 @@ impl BootSector {
             Cell::new("Volume flags"),
             Cell::new(&format!("0x{:04X}", self.volume_flags)),
         ]));
-        t.to_string()
+        write!(f, "{}", t)
     }
 }

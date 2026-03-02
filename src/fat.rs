@@ -40,7 +40,7 @@ impl<'a, T: Read + Seek> Fat<'a, T> {
             return Ok(out);
         }
 
-        while cur >= 2 && cur < 0xFFFFFFF0 && steps < max {
+        while (2..0xFFFFFFF0).contains(&cur) && steps < max {
             if !seen.insert(cur) {
                 warn!("walk_chain: detected cycle at cluster {}", cur);
                 break;

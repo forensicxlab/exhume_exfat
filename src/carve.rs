@@ -194,7 +194,7 @@ pub fn carve<T: std::io::Read + std::io::Seek>(
     let inact = collect_inactive_entries(fs)?;
     debug!("carve: inactive sets indexed = {}", inact.len());
 
-    create_dir_all(out_dir).map_err(|e| FsError::Io(e))?;
+    create_dir_all(out_dir).map_err(FsError::Io)?;
 
     let mut found = 0usize;
     let mut cl = 2u32; // first data cluster
@@ -276,10 +276,8 @@ pub fn carve<T: std::io::Read + std::io::Seek>(
                     info!("carved {} bytes -> {}", data.len(), fname);
 
                     found += 1;
-                    if let Some(max) = limit {
-                        if found >= max {
-                            return Ok(found);
-                        }
+                    if limit.is_some_and(|max| found >= max) {
+                        return Ok(found);
                     }
                     break;
                 }

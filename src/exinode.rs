@@ -91,8 +91,10 @@ impl ExInode {
     pub fn to_json(&self) -> Value {
         serde_json::to_value(self).unwrap_or_else(|_| json!({}))
     }
+}
 
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for ExInode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut t = Table::new();
         t.add_row(Row::new(vec![
             Cell::new("Identifier"),
@@ -127,6 +129,6 @@ impl ExInode {
             Cell::new("Accessed"),
             Cell::new(&unix_to_iso(self.last_access_time)),
         ]));
-        t.to_string()
+        write!(f, "{}", t)
     }
 }

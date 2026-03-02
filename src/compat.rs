@@ -25,14 +25,17 @@ impl CompatDirEntry {
     pub fn to_json(&self) -> Value {
         serde_json::to_value(self).unwrap_or_else(|_| json!({}))
     }
-    pub fn to_string(&self) -> String {
+}
+
+impl std::fmt::Display for CompatDirEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if !self.name.is_empty() {
-            format!(
-                "0x{:016x} :  {} : 0x{:x}",
+            write!(
+                f, "0x{:016x} :  {} : 0x{:x}",
                 self.inode, self.name, self.file_type
             )
         } else {
-            format!("0x{:016x} :  ? : 0x{:x}", self.inode, self.file_type)
+            write!(f, "0x{:016x} :  ? : 0x{:x}", self.inode, self.file_type)
         }
     }
 }

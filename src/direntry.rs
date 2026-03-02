@@ -205,7 +205,7 @@ impl FileRecord {
 }
 
 // Helper to assemble a set of 0x85 + 0xC0 + 0xC1... into a FileRecord
-pub fn assemble_file<'a>(set: &'a [RawDirEnt]) -> Option<FileRecord> {
+pub fn assemble_file(set: &[RawDirEnt]) -> Option<FileRecord> {
     if set.is_empty() {
         return None;
     }
