@@ -31,7 +31,8 @@ impl std::fmt::Display for CompatDirEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if !self.name.is_empty() {
             write!(
-                f, "0x{:016x} :  {} : 0x{:x}",
+                f,
+                "0x{:016x} :  {} : 0x{:x}",
                 self.inode, self.name, self.file_type
             )
         } else {

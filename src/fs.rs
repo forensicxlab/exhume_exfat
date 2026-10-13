@@ -3,9 +3,9 @@ use crate::compat::CompatDirEntry;
 use crate::direntry::{EntryType, FileRecord, RawDirEnt, assemble_file};
 use crate::exinode::ExInode;
 use crate::fat::Fat;
-use log::{debug, error, warn};
+use log::{debug, warn};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};
 use thiserror::Error;
 
@@ -27,6 +27,16 @@ pub struct ExFatFS<T: Read + Seek> {
     // fake-inode index: inode -> (parent_dir_first_cluster, primary_entry_index, FileRecord)
     index_built: bool,
     inode_to_record: HashMap<u64, (u32, usize, FileRecord)>,
+    // Only the currently read chain is retained. Sequential ranges never walk
+    // from the beginning again; the visited metadata detects corrupt cycles.
+    read_cursor: Option<ReadCursor>,
+}
+
+struct ReadCursor {
+    first: u32,
+    index: u64,
+    cluster: u32,
+    visited: HashSet<u32>,
 }
 
 impl<T: Read + Seek> ExFatFS<T> {
@@ -40,6 +50,7 @@ impl<T: Read + Seek> ExFatFS<T> {
             io,
             index_built: false,
             inode_to_record: HashMap::new(),
+            read_cursor: None,
         })
     }
 
@@ -352,5 +363,219 @@ impl<T: Read + Seek> ExFatFS<T> {
         }
 
         self.read_file(&fr)
+    }
+
+    /// Read logical bytes without allocating the file or a whole cluster.
+    pub fn read_inode_range(
+        &mut self,
+        inode: &ExInode,
+        offset: u64,
+        length: usize,
+    ) -> Result<Vec<u8>, FsError> {
+        self.ensure_index()?;
+        let record = self
+            .inode_to_record
+            .get(&inode.i_num)
+            .map(|(_, _, record)| record.clone())
+            .ok_or_else(|| FsError::NotFound(format!("inode {}", inode.i_num)))?;
+        self.read_file_range(&record, offset, length)
+    }
+
+    /// FAT traversal state is reused between increasing range requests.
+    pub fn read_file_range(
+        &mut self,
+        file: &FileRecord,
+        offset: u64,
+        length: usize,
+    ) -> Result<Vec<u8>, FsError> {
+        if file.is_dir() {
+            return Err(FsError::NotAFile(file.name.clone()));
+        }
+        if offset >= file.size || length == 0 {
+            return Ok(Vec::new());
+        }
+        let count = (file.size - offset).min(length as u64) as usize;
+        let valid = file.valid_data_length.unwrap_or(file.size);
+        if valid > file.size {
+            return Err(FsError::Parse("valid data length exceeds file size".into()));
+        }
+        let initialized = valid.saturating_sub(offset).min(count as u64) as usize;
+        let cluster_bytes = self.bpb.bytes_per_cluster();
+        let mut output = vec![0; count];
+        let mut done = 0;
+        while done < initialized {
+            let logical = offset + done as u64;
+            let index = logical / cluster_bytes;
+            let cluster = if file.general_flags & 2 != 0 {
+                u64::from(file.first_cluster)
+                    .checked_add(index)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .ok_or_else(|| FsError::Parse("contiguous cluster overflow".into()))?
+            } else {
+                if self
+                    .read_cursor
+                    .as_ref()
+                    .is_none_or(|c| c.first != file.first_cluster || c.index > index)
+                {
+                    self.validate_data_cluster(file.first_cluster)?;
+                    self.read_cursor = Some(ReadCursor {
+                        first: file.first_cluster,
+                        index: 0,
+                        cluster: file.first_cluster,
+                        visited: HashSet::from([file.first_cluster]),
+                    });
+                }
+                while self.read_cursor.as_ref().unwrap().index < index {
+                    let current = self.read_cursor.as_ref().unwrap().cluster;
+                    let next = Fat::new(&self.bpb, &mut self.io).read_entry(current)?;
+                    self.validate_data_cluster(next)?;
+                    let cursor = self.read_cursor.as_mut().unwrap();
+                    if !cursor.visited.insert(next) {
+                        return Err(FsError::Parse("cycle in file cluster chain".into()));
+                    }
+                    cursor.cluster = next;
+                    cursor.index += 1;
+                }
+                self.read_cursor.as_ref().unwrap().cluster
+            };
+            self.validate_data_cluster(cluster)?;
+            let within = logical % cluster_bytes;
+            let take = (initialized - done).min((cluster_bytes - within) as usize);
+            let physical = self
+                .cluster_to_offset(cluster)
+                .checked_add(within)
+                .ok_or_else(|| FsError::Parse("cluster byte offset overflow".into()))?;
+            self.io.seek(SeekFrom::Start(physical))?;
+            self.io.read_exact(&mut output[done..done + take])?;
+            done += take;
+        }
+        Ok(output)
+    }
+
+    fn validate_data_cluster(&self, cluster: u32) -> Result<(), FsError> {
+        if cluster < 2
+            || u64::from(cluster) >= u64::from(self.bpb.cluster_count) + 2
+            || cluster >= 0xffff_fff0
+        {
+            return Err(FsError::Parse(format!(
+                "invalid or prematurely terminated cluster chain at {cluster:#x}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+    use std::io::Cursor;
+    fn fixture(chained: bool) -> (ExFatFS<Cursor<Vec<u8>>>, FileRecord) {
+        let bpb = BootSector {
+            oem_name: *b"EXFAT   ",
+            partition_offset: 0,
+            volume_length: 64,
+            fat_offset: 1,
+            fat_length: 1,
+            cluster_heap_offset: 4,
+            cluster_count: 32,
+            root_dir_first_cluster: 2,
+            volume_serial: 0,
+            fs_revision: 0x100,
+            volume_flags: 0,
+            bytes_per_sector_shift: 9,
+            sectors_per_cluster_shift: 0,
+            num_fats: 1,
+            drive_select: 0,
+        };
+        let mut bytes = vec![0; 64 * 512];
+        let clusters = if chained { [3, 7, 4] } else { [3, 4, 5] };
+        for (i, cluster) in clusters.iter().enumerate() {
+            let offset = bpb.cluster_to_byte_offset(*cluster) as usize;
+            bytes[offset..offset + 512].fill(b'a' + i as u8);
+            let next = clusters.get(i + 1).copied().unwrap_or(u32::MAX);
+            bytes[512 + *cluster as usize * 4..516 + *cluster as usize * 4]
+                .copy_from_slice(&next.to_le_bytes());
+        }
+        let fs = ExFatFS {
+            bpb,
+            io: Cursor::new(bytes),
+            index_built: true,
+            inode_to_record: HashMap::new(),
+            read_cursor: None,
+        };
+        let record = FileRecord {
+            name: "test".into(),
+            attributes: 0,
+            first_cluster: 3,
+            size: 1500,
+            valid_data_length: Some(1500),
+            general_flags: if chained { 0 } else { 2 },
+            create_time: 0,
+            last_mod_time: 0,
+            last_access_time: 0,
+        };
+        (fs, record)
+    }
+    #[test]
+    fn contiguous_and_fragmented_ranges_match_expected_bytes() {
+        for chained in [false, true] {
+            let (mut fs, record) = fixture(chained);
+            let expected = [vec![b'a'; 512], vec![b'b'; 512], vec![b'c'; 476]].concat();
+            for (offset, count) in [
+                (0, 1),
+                (500, 50),
+                (549, 1),
+                (1020, 700),
+                (1500, 10),
+                (u64::MAX, 5),
+                (17, 40),
+            ] {
+                let result = fs.read_file_range(&record, offset, count).unwrap();
+                let start = (offset.min(expected.len() as u64)) as usize;
+                assert_eq!(result, expected[start..(start + count).min(expected.len())]);
+            }
+        }
+    }
+    #[test]
+    fn sequential_chain_keeps_its_cursor_and_rejects_cycles_and_short_chains() {
+        let (mut fs, record) = fixture(true);
+        fs.read_file_range(&record, 512, 1).unwrap();
+        assert_eq!(fs.read_cursor.as_ref().unwrap().index, 1);
+        fs.read_file_range(&record, 600, 1).unwrap();
+        assert_eq!(fs.read_cursor.as_ref().unwrap().visited.len(), 2);
+        fs.io.get_mut()[512 + 7 * 4..516 + 7 * 4].copy_from_slice(&3u32.to_le_bytes());
+        assert!(
+            fs.read_file_range(&record, 1024, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("cycle")
+        );
+        let (mut fs, record) = fixture(true);
+        fs.io.get_mut()[512 + 3 * 4..516 + 3 * 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(fs.read_file_range(&record, 512, 1).is_err());
+    }
+    #[test]
+    fn uninitialized_tail_is_zero_filled_and_empty_files_need_no_cluster() {
+        let (mut fs, mut record) = fixture(false);
+        record.valid_data_length = Some(510);
+        assert_eq!(
+            fs.read_file_range(&record, 508, 8).unwrap(),
+            [b'a', b'a', 0, 0, 0, 0, 0, 0]
+        );
+        record.size = 0;
+        record.valid_data_length = Some(0);
+        record.first_cluster = 0;
+        assert!(fs.read_file_range(&record, 0, 10).unwrap().is_empty());
+        record.size = 1;
+        record.valid_data_length = Some(2);
+        assert!(fs.read_file_range(&record, 0, 1).is_err());
+    }
+    #[test]
+    fn a_small_read_never_materializes_the_advertised_file() {
+        let (mut fs, mut record) = fixture(false);
+        record.size = 1024 * 1024 * 1024;
+        record.valid_data_length = Some(record.size);
+        assert_eq!(fs.read_file_range(&record, 3, 12).unwrap(), vec![b'a'; 12]);
+        assert_eq!(fs.io.position(), fs.cluster_to_offset(3) + 15);
     }
 }

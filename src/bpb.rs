@@ -41,11 +41,7 @@ impl BootSector {
         let read_u64 = |o: usize| -> Result<u64, String> {
             bs.get(o..o + 8)
                 .ok_or_else(|| format!("BS bounds error @0x{:X}+8", o))
-                .map(|s| {
-                    u64::from_le_bytes([
-                        s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
-                    ])
-                })
+                .map(|s| u64::from_le_bytes([s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]]))
         };
 
         let mut oem_name = [0u8; 8];

@@ -91,6 +91,7 @@ pub struct StreamExtensionEntry {
     pub general_flags: u8,
     pub first_cluster: u32,
     pub data_length: u64,
+    pub valid_data_length: u64,
 }
 
 impl StreamExtensionEntry {
@@ -102,6 +103,7 @@ impl StreamExtensionEntry {
             general_flags: b[1],
             first_cluster: le_u32(20),
             data_length: le_u64(24),
+            valid_data_length: le_u64(8),
         }
     }
 }
@@ -189,6 +191,8 @@ pub struct FileRecord {
     pub attributes: u16,
     pub first_cluster: u32,
     pub size: u64,
+    #[serde(default)]
+    pub valid_data_length: Option<u64>,
     pub general_flags: u8,
     pub create_time: u32,
     pub last_mod_time: u32,
@@ -233,6 +237,7 @@ pub fn assemble_file(set: &[RawDirEnt]) -> Option<FileRecord> {
             attributes: fd.attributes,
             first_cluster: st.first_cluster,
             size: st.data_length,
+            valid_data_length: Some(st.valid_data_length),
             general_flags: st.general_flags,
             create_time: fd.create_time,
             last_mod_time: fd.last_mod_time,
@@ -240,4 +245,44 @@ pub fn assemble_file(set: &[RawDirEnt]) -> Option<FileRecord> {
         });
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assembled_record_preserves_valid_data_length_separately_from_size() {
+        let mut primary = [0; 32];
+        primary[0] = 0x85;
+        let mut stream = [0; 32];
+        stream[0] = 0xc0;
+        stream[1] = 2;
+        stream[8..16].copy_from_slice(&510u64.to_le_bytes());
+        stream[20..24].copy_from_slice(&3u32.to_le_bytes());
+        stream[24..32].copy_from_slice(&1500u64.to_le_bytes());
+        let parsed = StreamExtensionEntry::parse(&RawDirEnt::from_bytes(&stream));
+        assert_eq!(parsed.valid_data_length, 510);
+        assert_eq!(parsed.data_length, 1500);
+        let record = assemble_file(&[
+            RawDirEnt::from_bytes(&primary),
+            RawDirEnt::from_bytes(&stream),
+        ])
+        .unwrap();
+        assert_eq!(record.valid_data_length, Some(510));
+        assert_eq!(record.size, 1500);
+        assert_eq!(record.first_cluster, 3);
+    }
+
+    #[test]
+    fn older_serialized_file_records_remain_readable() {
+        let record: FileRecord = serde_json::from_value(json!({
+            "name": "legacy", "attributes": 0, "first_cluster": 3,
+            "size": 1500, "general_flags": 2, "create_time": 0,
+            "last_mod_time": 0, "last_access_time": 0
+        }))
+        .unwrap();
+        assert_eq!(record.valid_data_length, None);
+        assert_eq!(record.size, 1500);
+    }
 }
