@@ -1,6 +1,6 @@
 use clap::*;
 use clap_num::maybe_hex;
-use exhume_body::{Body, BodySlice};
+use exhume_body::{BodySlice, credentials};
 use exhume_exfat::ExFatFS;
 use log::{error, info};
 use serde_json::{Value, json};
@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::Write;
 
 fn main() {
-    let matches = Command::new("exhume_exfat")
+    let command = Command::new("exhume_exfat")
         .version(crate_version!())
         .author(crate_authors!())
         .about("Exhume artifacts from an exFAT filesystem.")
@@ -116,7 +116,8 @@ fn main() {
         //         .requires("carve")
         //         .help("Stop after carving N files (optional)."),
         // )
-        .get_matches();
+        ;
+    let matches = password_args(command).get_matches();
 
     // Logger
     let lvl = matches.get_one::<String>("log_level").unwrap();
@@ -150,7 +151,18 @@ fn main() {
     // let carve_limit = matches.get_one::<usize>("carve_limit").copied();
 
     // Body / slice
-    let body = Body::new(file_path.to_owned(), format);
+    let body = credentials::open_body(
+        file_path,
+        format,
+        matches
+            .get_one::<String>("password_file")
+            .map(String::as_str),
+        matches.get_flag("password_stdin"),
+    )
+    .unwrap_or_else(|message| {
+        error!("{message}");
+        std::process::exit(1);
+    });
     let partition_size = *size * body.get_sector_size() as u64;
     let mut slice = match BodySlice::new(&body, *offset, partition_size) {
         Ok(sl) => sl,
@@ -285,4 +297,24 @@ fn main() {
             println!("{}", fs.bpb);
         }
     }
+}
+
+/// Register this executable's mutually exclusive container-password sources.
+fn password_args(command: clap::Command) -> clap::Command {
+    command
+        .arg(
+            clap::Arg::new("password_file")
+                .long("password-file")
+                .global(true)
+                .value_name("PATH")
+                .conflicts_with("password_stdin")
+                .help("Read the image container password from a file; remove one trailing line ending."),
+        )
+        .arg(
+            clap::Arg::new("password_stdin")
+                .long("password-stdin")
+                .global(true)
+                .action(clap::ArgAction::SetTrue)
+                .help("Read the image container password from stdin; remove one trailing line ending."),
+        )
 }
